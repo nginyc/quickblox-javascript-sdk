@@ -13,9 +13,10 @@ var unsupportedError = 'This function isn\'t supported outside of the browser (.
 var XMPP;
 
 /** create StropheJS or NodeXMPP connection object */
+if (Utils.getEnv().react_native) {
+    XMPP = require('react-native-xmpp');
 if (Utils.getEnv().browser) {
     var Connection = require('../../qbStrophe');
-
     Strophe.addNamespace('CARBONS', chatUtils.MARKERS.CARBONS);
     Strophe.addNamespace('CHAT_MARKERS', chatUtils.MARKERS.CHAT);
     Strophe.addNamespace('PRIVACY_LIST', chatUtils.MARKERS.PRIVACY);
@@ -24,8 +25,7 @@ if (Utils.getEnv().browser) {
     XMPP = require('nativescript-xmpp-client');
 } else if (Utils.getEnv().node)  {
     XMPP = require('node-xmpp-client');
-}
-
+} 
 
 function ChatProxy(service) {
     var self = this;
@@ -51,8 +51,11 @@ function ChatProxy(service) {
             }
         };
     } else {
+        // react-native-xmpp
+        if (Utils.getEnv().react_native) {
+            self.Client = XMPP;
         // nativescript-xmpp-client
-        if (Utils.getEnv().nativescript) {
+        } else if (Utils.getEnv().nativescript) {
             self.Client = new XMPP.Client({
                 'websocket': {
                     'url': config.chatProtocol.websocket
@@ -64,6 +67,11 @@ function ChatProxy(service) {
             self.Client = new XMPP({
                 'autostart': false
             });
+        }
+
+        // For React Native XMPP, rename functions
+        if (Utils.getEnv().react_native) {
+            self.Client.send = self.Client.sendStanza;
         }
 
         // override 'send' function to add some logs
@@ -294,6 +302,7 @@ function ChatProxy(service) {
             recipient,
             jid;
 
+        // TODO: Fix for React Native
         if (Utils.getEnv().browser) {
             recipient = stanza.querySelector('forwarded') ? stanza.querySelector('forwarded').querySelector('message').getAttribute('to') : null;
 
@@ -303,7 +312,7 @@ function ChatProxy(service) {
             recipient = forwardedMessage ? chatUtils.getAttr(forwardedMessage, 'to') : null;
 
             jid = self.Client.options.jid.user;
-        }
+        } 
 
         recipientId = recipient ? self.helpers.getIdFromNode(recipient) : null;
 
@@ -383,6 +392,7 @@ function ChatProxy(service) {
             to = chatUtils.getAttr(stanza, 'to'),
             id = chatUtils.getAttr(stanza, 'id'),
             type = chatUtils.getAttr(stanza, 'type'),
+            // TODO: Fix for React Native
             currentUserId = self.helpers.getIdFromNode(self.helpers.userCurrentJid(Utils.getEnv().browser ? self.connection : self.Client)),
             x = chatUtils.getElement(stanza, 'x'),
             xXMLNS, status, statusCode, dialogId, userId;
@@ -550,6 +560,7 @@ function ChatProxy(service) {
                         if(Utils.getEnv().browser){
                             self.connection.send($pres());
                         } else {
+                            // TODO: Fix for React Native
                             self.Client.send(chatUtils.createStanza(XMPP.Stanza, null,'presence'));
                         }
                     }
@@ -691,8 +702,80 @@ ChatProxy.prototype = {
         self._isConnecting = true;
         self._isLogout = false;
 
+        /** Connect for React Native */
+        if(Utils.getEnv().react_native) {
+            // Remove all connection handlers exist from a previous connection
+            self.Client.removeListeners();
+
+            self.Client.on('connect', function() {
+                Utils.QBLog('[QBChat]', 'Status.CONNECTING', '(Chat Protocol - ' + (config.chatProtocol.active === 1 ? 'BOSH' : 'WebSocket' + ')'));
+            });
+
+            self.Client.on('auth', function() {
+                Utils.QBLog('[QBChat]', 'Status.AUTHENTICATING');
+            });
+                    
+            self.Client.on('online', function() {
+                self._postConnectActions(function(roster) {
+                    callback(null, roster);
+                }, isInitialConnect);
+            });
+    
+            self.Client.on('stanza', function(stanza) {
+                Utils.QBLog('[QBChat] RECV:', stanza.toString());
+                /**
+                 * Detect typeof incoming stanza
+                 * and fire the Listener
+                 */
+                if (stanza.is('presence')) {
+                    self._onPresence(stanza);
+                } else if (stanza.is('iq')) {
+                    self._onIQ(stanza);
+                } else if(stanza.is('message')) {
+                    if (stanza.attrs.type === 'headline') {
+                        self._onSystemMessageListener(stanza);
+                    } else if(stanza.attrs.type === 'error') {
+                        self._onMessageErrorListener(stanza);
+                    } else {
+                        self._onMessage(stanza);
+                    }
+                }
+            });
+            
+            self.Client.on('disconnect', function() {
+                Utils.QBLog('[QBChat]', 'Status.DISCONNECTED - ' + chatUtils.getLocalTime());
+
+                if (typeof self.onDisconnectedListener === 'function') {
+                    Utils.safeCallbackCall(self.onDisconnectedListener);
+                }
+                
+                self.isConnected = false;
+                self._isConnecting = false;
+
+                // reconnect to chat and enable check connection
+                self._establishConnection(params);
+            });
+            
+            self.Client.on('error', function() {
+                Utils.QBLog('[QBChat]', 'Status.ERROR - ' + chatUtils.getLocalTime());
+                err = Utils.getError(422, 'Status.ERROR - An error has occurred', 'QBChat');
+    
+                if (isInitialConnect) {
+                    callback(err, null);
+                }
+
+                self.isConnected = false;
+                self._isConnecting = false;
+            });
+
+            self.Client.on('end', function() {
+                self.Client.removeListeners();                
+            });
+
+            self.Client.connect(userJid, params.password);
+        }
         /** Connect for browser env. */
-        if (Utils.getEnv().browser) {
+        else if (Utils.getEnv().browser) {
             self.connection.connect(userJid, params.password, function(status) {
                 switch (status) {
                     case Strophe.Status.ERROR:
@@ -782,9 +865,8 @@ ChatProxy.prototype = {
                 }
             });
         }
-
         /** connect for node */
-        if(!Utils.getEnv().browser) {
+        else if(Utils.getEnv().node) {
             // Remove all connection handlers exist from a previous connection
             self.Client.removeAllListeners();
 

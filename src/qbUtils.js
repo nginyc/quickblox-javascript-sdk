@@ -30,12 +30,17 @@ var Utils = {
     getEnv: function() {
         var isNativeScript = typeof global === 'object' && (global.android || global.NSObject),
             isNode = typeof window === 'undefined' && typeof exports === 'object' && !isNativeScript,
-            isBrowser = typeof window !== 'undefined';
+            isBrowser = typeof window !== 'undefined',
+            isReactNative = (
+                typeof navigator != 'undefined' &&
+                navigator.product == 'ReactNative'
+            );
 
         return {
             'nativescript': isNativeScript,
             'browser': isBrowser,
-            'node': isNode
+            'node': isNode,
+            'react_native': isReactNative
         };
     },
 
