@@ -78,7 +78,6 @@
   },
   "config": {
     "ghooks": {
-      "pre-push": "jasmine"
     }
   },
   "scripts": {
@@ -88,7 +87,6 @@
     "buildNotMinified": "npm run lint && gulp build",
     "generateBuildVersion": "gulp generate-build_version",
     "docs": "rimraf docs && mkdir docs && jsdoc -c ./jsdoc.conf.json",
-    "start": "gulp connect",
-    "test": "jasmine"
+    "start": "gulp connect"
   }
 }
